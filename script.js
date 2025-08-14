@@ -7,9 +7,11 @@ let gameState = {
     gamePhase: 'betting', // 'betting', 'playing', 'dealer', 'finished'
     gamesPlayed: 0,
     gamesWon: 0,
-    totalBet: 0,
     currentBet: 5,
-    numHands: 1
+    numHands: 1,
+    totalHandsPlayed: 0,   // all hands played this session (including splits)
+    totalMoneyBet: 0,      // total amount wagered across the session
+    currentRoundBet: 0     // total staked this round (for Net calculation)
 };
 
 const suits = ['♠', '♥', '♦', '♣'];
@@ -41,7 +43,7 @@ function shuffleDeck(deck) {
 function getRankValue(rank) {
     if (rank === 'A') return 11;
     if (['J', 'Q', 'K'].includes(rank)) return 10;
-    return parseInt(rank);
+    return parseInt(rank, 10);
 }
 
 function calculateHandValue(cards) {
@@ -91,101 +93,131 @@ function setHands(num) {
     });
 }
 
+function canSplitHand(hand) {
+    if (gameState.gamePhase !== 'playing') return { ok: false, reason: 'Not your turn' };
+    if (!hand || (hand.status !== 'playing' && hand.status !== 'split')) return { ok: false, reason: 'Hand not active' };
+    if (!hand.cards || hand.cards.length !== 2) return { ok: false, reason: 'Need exactly two cards' };
+    const [c0, c1] = hand.cards;
+    if (c0.rank !== c1.rank) return { ok: false, reason: 'Cards are not a pair' };
+    if (gameState.money < hand.bet) return { ok: false, reason: 'Insufficient funds to split' };
+    if (gameState.hands.length >= 4) return { ok: false, reason: 'Maximum 4 hands reached' };
+    return { ok: true, reason: '' };
+}
+
+function setTextIfExists(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+}
+
 function updateDisplay() {
-    document.getElementById('money').textContent = `$${gameState.money}`;
-    document.getElementById('totalBet').textContent = `$${gameState.totalBet}`;
-    document.getElementById('handCount').textContent = gameState.hands.length || gameState.numHands;
+    setTextIfExists('money', `$${gameState.money}`);
+
+    // Show cumulative totals per your request
+    setTextIfExists('totalBet', `$${gameState.totalMoneyBet}`);    // cumulative money bet
+    setTextIfExists('handCount', gameState.totalHandsPlayed);      // support existing id
+    setTextIfExists('totalHands', gameState.totalHandsPlayed);     // support alternate id
 
     const winRate = gameState.gamesPlayed > 0 ?
         Math.round((gameState.gamesWon / gameState.gamesPlayed) * 100) : 0;
-    document.getElementById('winRate').textContent = `${winRate}%`;
+    setTextIfExists('winRate', `${winRate}%`);
 
     // Update dealer
     const dealerValue = calculateHandValue(gameState.dealerHand);
-    document.getElementById('dealerValue').textContent =
-        gameState.gamePhase === 'betting' || gameState.gamePhase === 'playing' ?
-            (gameState.dealerHand.length > 0 ? '?' : '0') : dealerValue;
+    setTextIfExists(
+        'dealerValue',
+        (gameState.gamePhase === 'betting' || gameState.gamePhase === 'playing') ?
+            (gameState.dealerHand.length > 0 ? '?' : '0') : dealerValue
+    );
 
     const dealerCardsEl = document.getElementById('dealerCards');
-    dealerCardsEl.innerHTML = '';
-    gameState.dealerHand.forEach((card, index) => {
-        const cardEl = createCardElement(card,
-            index === 1 && (gameState.gamePhase === 'betting' || gameState.gamePhase === 'playing'));
-        dealerCardsEl.appendChild(cardEl);
-    });
+    if (dealerCardsEl) {
+        dealerCardsEl.innerHTML = '';
+        gameState.dealerHand.forEach((card, index) => {
+            const cardEl = createCardElement(
+                card,
+                index === 1 && (gameState.gamePhase === 'betting' || gameState.gamePhase === 'playing')
+            );
+            dealerCardsEl.appendChild(cardEl);
+        });
+    }
 
     // Update hands
     const container = document.getElementById('handsContainer');
-    container.innerHTML = '';
+    if (container) {
+        container.innerHTML = '';
 
-    gameState.hands.forEach((hand, index) => {
-        const handEl = document.createElement('div');
-        handEl.className = `hand ${index === gameState.currentHandIndex ? 'active' : ''}`;
+        gameState.hands.forEach((hand, index) => {
+            const handEl = document.createElement('div');
+            handEl.className = `hand ${index === gameState.currentHandIndex ? 'active' : ''}`;
 
-        const handValue = calculateHandValue(hand.cards);
-        const isBusted = handValue > 21;
-        const isBlackjack = handValue === 21 && hand.cards.length === 2;
+            const handValue = calculateHandValue(hand.cards);
+            const isBusted = handValue > 21;
+            const isBlackjack = handValue === 21 && hand.cards.length === 2;
 
-        let statusText = '';
-        if (hand.status === 'doubled') statusText = ' (DOUBLED)';
-        else if (hand.status === 'surrendered') statusText = ' (SURRENDERED)';
-        else if (hand.status === 'split') statusText = ' (SPLIT)';
-        else if (isBlackjack && gameState.gamePhase !== 'betting') statusText = ' (BLACKJACK!)';
-        else if (isBusted) statusText = ' (BUST!)';
+            let statusText = '';
+            if (hand.status === 'doubled') statusText = ' (DOUBLED)';
+            else if (hand.status === 'surrendered') statusText = ' (SURRENDERED)';
+            else if (hand.status === 'split') statusText = ' (SPLIT)';
+            else if (isBlackjack && gameState.gamePhase !== 'betting') statusText = ' (BLACKJACK!)';
+            else if (isBusted) statusText = ' (BUST!)';
 
-        handEl.innerHTML = `
-                    <div class="hand-header">
-                        <div class="hand-title">HAND ${index + 1} - BET: $${hand.bet}${statusText}</div>
-                        <div class="hand-value">${handValue}</div>
-                    </div>
-                    <div class="cards" id="handCards${index}"></div>
-                    <div class="actions" id="handActions${index}"></div>
+            handEl.innerHTML = `
+                <div class="hand-header">
+                    <div class="hand-title">HAND ${index + 1} - BET: $${hand.bet}${statusText}</div>
+                    <div class="hand-value">${handValue}</div>
+                </div>
+                <div class="cards" id="handCards${index}"></div>
+                <div class="actions" id="handActions${index}"></div>
+            `;
+
+            const cardsEl = handEl.querySelector(`#handCards${index}`);
+            hand.cards.forEach(card => {
+                cardsEl.appendChild(createCardElement(card));
+            });
+
+            const actionsEl = handEl.querySelector(`#handActions${index}`);
+            const isActiveStatus = hand.status === 'playing' || hand.status === 'split';
+
+            if (index === gameState.currentHandIndex &&
+                gameState.gamePhase === 'playing' &&
+                !isBusted && !isBlackjack && isActiveStatus) {
+
+                const canDouble = hand.cards.length === 2 && gameState.money >= hand.bet;
+                const splitCheck = canSplitHand(hand);
+                const canSurrender = hand.cards.length === 2;
+
+                actionsEl.innerHTML = `
+                    <button class="btn" onclick="hit()">HIT</button>
+                    <button class="btn" onclick="stand()">STAND</button>
+                    <button class="btn" onclick="doubleDown()" ${!canDouble ? 'disabled' : ''} title="${!canDouble ? 'Need at least your bet to double' : ''}">DOUBLE</button>
+                    <button class="btn" onclick="surrender()" ${!canSurrender ? 'disabled' : ''} title="${!canSurrender ? 'Only on first two cards' : ''}">SURRENDER</button>
+                    <button class="btn" onclick="split()" ${!splitCheck.ok ? 'disabled' : ''} title="${splitCheck.ok ? '' : splitCheck.reason}">SPLIT</button>
                 `;
+            }
 
-        const cardsEl = handEl.querySelector(`#handCards${index}`);
-        hand.cards.forEach(card => {
-            cardsEl.appendChild(createCardElement(card));
+            container.appendChild(handEl);
         });
+    }
 
-        const actionsEl = handEl.querySelector(`#handActions${index}`);
-        if (index === gameState.currentHandIndex && gameState.gamePhase === 'playing' &&
-            !isBusted && !isBlackjack && hand.status === 'playing') {
-
-            const canDouble = hand.cards.length === 2 && gameState.money >= hand.bet;
-            const canSplit = hand.cards.length === 2 &&
-                hand.cards[0].rank === hand.cards[1].rank &&
-                gameState.money >= hand.bet && gameState.hands.length < 4;
-            const canSurrender = hand.cards.length === 2;
-
-            actionsEl.innerHTML = `
-                        <button class="btn" onclick="hit()">HIT</button>
-                        <button class="btn" onclick="stand()">STAND</button>
-                        <button class="btn" onclick="doubleDown()" ${!canDouble ? 'disabled' : ''}>DOUBLE</button>
-                        <button class="btn" onclick="surrender()" ${!canSurrender ? 'disabled' : ''}>SURRENDER</button>
-                        <button class="btn" onclick="split()" ${!canSplit ? 'disabled' : ''}>SPLIT</button>
-                    `;
-        }
-
-        container.appendChild(handEl);
-    });
-
-    // Update buttons
+    // Update top-level buttons
     const dealBtn = document.getElementById('dealBtn');
     const newGameBtn = document.getElementById('newGameBtn');
 
-    if (gameState.gamePhase === 'betting') {
-        dealBtn.style.display = 'inline-block';
-        dealBtn.textContent = 'DEAL CARDS';
-        dealBtn.disabled = false;
-        newGameBtn.style.display = 'none';
-    } else if (gameState.gamePhase === 'finished') {
-        dealBtn.style.display = 'inline-block';
-        dealBtn.textContent = 'NEXT HAND';
-        dealBtn.disabled = false;
-        newGameBtn.style.display = gameState.money < 5 ? 'inline-block' : 'none';
-    } else {
-        dealBtn.style.display = 'none';
-        newGameBtn.style.display = 'none';
+    if (dealBtn && newGameBtn) {
+        if (gameState.gamePhase === 'betting') {
+            dealBtn.style.display = 'inline-block';
+            dealBtn.textContent = 'DEAL CARDS';
+            dealBtn.disabled = false;
+            newGameBtn.style.display = 'none';
+        } else if (gameState.gamePhase === 'finished') {
+            dealBtn.style.display = 'inline-block';
+            dealBtn.textContent = 'NEXT HAND';
+            dealBtn.disabled = false;
+            newGameBtn.style.display = gameState.money < 5 ? 'inline-block' : 'none';
+        } else {
+            dealBtn.style.display = 'none';
+            newGameBtn.style.display = 'none';
+        }
     }
 }
 
@@ -195,9 +227,9 @@ function createCardElement(card, faceDown = false) {
 
     if (!faceDown) {
         cardEl.innerHTML = `
-                    <div class="card-value">${card.rank}</div>
-                    <div class="card-suit">${card.suit}</div>
-                `;
+            <div class="card-value">${card.rank}</div>
+            <div class="card-suit">${card.suit}</div>
+        `;
     } else {
         cardEl.innerHTML = `<div style="color: #ffffff; font-size: 14px;">?</div>`;
     }
@@ -209,7 +241,6 @@ function createCardElement(card, faceDown = false) {
 }
 
 function addCardDragBehavior(cardEl) {
-  // prevent touch scrolling while dragging
   cardEl.style.touchAction = 'none';
 
   let dragging = false;
@@ -228,12 +259,9 @@ function addCardDragBehavior(cardEl) {
     cardEl.setPointerCapture(pointerId);
 
     const rect = cardEl.getBoundingClientRect();
-
-    // where inside the card we grabbed
     offsetX = e.clientX - rect.left;
     offsetY = e.clientY - rect.top;
 
-    // keep layout spot with a placeholder
     placeholder = document.createElement('div');
     placeholder.style.width = rect.width + 'px';
     placeholder.style.height = rect.height + 'px';
@@ -241,10 +269,8 @@ function addCardDragBehavior(cardEl) {
     startNextSibling = cardEl.nextSibling;
     startParent.insertBefore(placeholder, startNextSibling);
 
-    // move card to body so it's not affected by transforms/overflow
     document.body.appendChild(cardEl);
 
-    // lock size and position to the page
     cardEl.style.position = 'absolute';
     cardEl.style.width = rect.width + 'px';
     cardEl.style.height = rect.height + 'px';
@@ -259,25 +285,22 @@ function addCardDragBehavior(cardEl) {
 
   function onMove(e) {
     if (!dragging) return;
-    // follow the pointer exactly
     cardEl.style.left = (e.pageX - offsetX) + 'px';
     cardEl.style.top  = (e.pageY - offsetY) + 'px';
   }
 
-  function onUp(e) {
+  function onUp() {
     if (!dragging) return;
     dragging = false;
 
     try { cardEl.releasePointerCapture(pointerId); } catch {}
 
-    // snap back to original place in the DOM
     startParent.insertBefore(cardEl, placeholder);
     placeholder.remove();
     placeholder = null;
 
-    // clean styles
     cardEl.classList.remove('dragging');
-    cardEl.classList.add('snapping-back'); // if you have a CSS animation
+    cardEl.classList.add('snapping-back');
     cardEl.style.position = '';
     cardEl.style.width = '';
     cardEl.style.height = '';
@@ -286,22 +309,20 @@ function addCardDragBehavior(cardEl) {
     cardEl.style.zIndex = '';
 
     window.removeEventListener('pointermove', onMove);
-
-    // optional: remove the snap class after your CSS duration
     setTimeout(() => cardEl.classList.remove('snapping-back'), 400);
   }
 }
 
 function startNewHand() {
     if (gameState.gamePhase === 'finished') {
-        // Next hand
+        // Reset round-only state for next hand
         gameState.hands = [];
         gameState.dealerHand = [];
         gameState.currentHandIndex = 0;
         gameState.gamePhase = 'betting';
-        gameState.totalBet = 0;
-        document.getElementById('message').textContent = '';
-        document.getElementById('message').className = 'message';
+        gameState.currentRoundBet = 0;
+        const msg = document.getElementById('message');
+        if (msg) { msg.textContent = ''; msg.className = 'message'; }
     }
 
     const numHands = gameState.numHands;
@@ -328,8 +349,12 @@ function startNewHand() {
         });
     }
 
+    // Deduct chips and update trackers
     gameState.money -= totalCost;
-    gameState.totalBet = totalCost;
+    gameState.currentRoundBet = totalCost;     // track this round's stake
+    gameState.totalMoneyBet += totalCost;      // cumulative
+    gameState.totalHandsPlayed += numHands;    // cumulative
+
     gameState.dealerHand = [];
     gameState.currentHandIndex = 0;
     gameState.gamePhase = 'playing';
@@ -342,8 +367,11 @@ function startNewHand() {
         gameState.dealerHand.push(gameState.deck.pop());
     }
 
-    // Check for blackjacks
+    // Mark blackjacks but don't skip first decision unless required
     checkForBlackjacks();
+
+    // Land on the first playable hand so actions (incl. SPLIT) render
+    findNextHand();
 
     updateDisplay();
 }
@@ -358,15 +386,10 @@ function checkForBlackjacks() {
         }
     }
 
-    // If dealer has blackjack, resolve immediately
     if (dealerBlackjack) {
         gameState.gamePhase = 'finished';
         resolveHands();
-        return;
     }
-
-    // Move to next playable hand
-    findNextHand();
 }
 
 function findNextHand() {
@@ -374,16 +397,15 @@ function findNextHand() {
         const hand = gameState.hands[gameState.currentHandIndex];
         const handValue = calculateHandValue(hand.cards);
 
-        if (hand.status === 'playing' && handValue < 21) {
+        if ((hand.status === 'playing' || hand.status === 'split') && handValue < 21) {
             updateDisplay();
             return;
         }
         gameState.currentHandIndex++;
     }
 
-    // All hands done, dealer plays
     gameState.gamePhase = 'dealer';
-    setTimeout(() => dealerPlay(), 500); // Add slight delay for better UX
+    setTimeout(() => dealerPlay(), 500);
 }
 
 function hit() {
@@ -395,7 +417,7 @@ function hit() {
         if (handValue > 21) hand.status = 'busted';
         else hand.status = 'stood';
         gameState.currentHandIndex++;
-        setTimeout(() => findNextHand(), 300); // Add delay for better UX
+        setTimeout(() => findNextHand(), 300);
     }
 
     updateDisplay();
@@ -410,9 +432,14 @@ function stand() {
 
 function doubleDown() {
     const hand = gameState.hands[gameState.currentHandIndex];
-    if (gameState.money >= hand.bet) {
+    if (gameState.money >= hand.bet && hand.cards.length === 2 &&
+        (hand.status === 'playing' || hand.status === 'split')) {
+
+        // Deduct extra stake and update both trackers
         gameState.money -= hand.bet;
-        gameState.totalBet += hand.bet;
+        gameState.currentRoundBet += hand.bet; // round stake increases
+        gameState.totalMoneyBet += hand.bet;   // cumulative stake increases
+
         hand.bet *= 2;
         hand.cards.push(gameState.deck.pop());
         hand.status = 'doubled';
@@ -424,42 +451,57 @@ function doubleDown() {
 
 function surrender() {
     const hand = gameState.hands[gameState.currentHandIndex];
-    hand.status = 'surrendered';
-    gameState.money += Math.floor(hand.bet / 2);
-    gameState.currentHandIndex++;
-    setTimeout(() => findNextHand(), 300);
-    updateDisplay();
-}
-
-function split() {
-    const hand = gameState.hands[gameState.currentHandIndex];
-    if (gameState.money >= hand.bet && gameState.hands.length < 4) {
-        gameState.money -= hand.bet;
-        gameState.totalBet += hand.bet;
-
-        const newHand = {
-            cards: [hand.cards.pop()],
-            bet: hand.bet,
-            status: 'playing'
-        };
-
-        hand.cards.push(gameState.deck.pop());
-        newHand.cards.push(gameState.deck.pop());
-
-        gameState.hands.splice(gameState.currentHandIndex + 1, 0, newHand);
-
+    if (hand.cards.length === 2 && (hand.status === 'playing' || hand.status === 'split')) {
+        hand.status = 'surrendered';
+        gameState.money += Math.floor(hand.bet / 2);
+        gameState.currentHandIndex++;
+        setTimeout(() => findNextHand(), 300);
         updateDisplay();
     }
 }
 
+function split() {
+    const hand = gameState.hands[gameState.currentHandIndex];
+    const splitCheck = canSplitHand(hand);
+    if (!splitCheck.ok) return;
+
+    // Deduct extra bet and update trackers
+    gameState.money -= hand.bet;
+    gameState.currentRoundBet += hand.bet; // this round's stake increases
+    gameState.totalMoneyBet += hand.bet;   // cumulative stake increases
+
+    // Split the pair
+    const movedCard = hand.cards.pop();
+    const newHand = {
+        cards: [movedCard],
+        bet: hand.bet,
+        status: 'split'
+    };
+
+    // Deal one to each
+    hand.cards.push(gameState.deck.pop());
+    newHand.cards.push(gameState.deck.pop());
+
+    // Label original as split for UI
+    if (hand.status === 'playing') hand.status = 'split';
+
+    // Insert right after current
+    gameState.hands.splice(gameState.currentHandIndex + 1, 0, newHand);
+
+    // NEW: count the extra hand created by the split
+    gameState.totalHandsPlayed += 1;
+
+    updateDisplay();
+}
+
 function dealerPlay() {
-    updateDisplay(); // Show dealer's hole card
+    updateDisplay();
 
     const dealCards = () => {
         if (calculateHandValue(gameState.dealerHand) < 17) {
             gameState.dealerHand.push(gameState.deck.pop());
             updateDisplay();
-            setTimeout(dealCards, 800); // Dealer draws cards with delay
+            setTimeout(dealCards, 800);
         } else {
             gameState.gamePhase = 'finished';
             resolveHands();
@@ -524,8 +566,10 @@ function resolveHands() {
     gameState.gamesPlayed++;
     if (handsWon > 0) gameState.gamesWon++;
 
+    // IMPORTANT: Net for THIS ROUND ONLY
+    const netWin = totalWinnings - gameState.currentRoundBet; // <-- fixes NaN
+
     const resultText = results.join(' | ');
-    const netWin = totalWinnings - gameState.totalBet;
     const messageClass = handsWon > 0 ? 'win' : (totalWinnings > 0 ? 'push' : 'lose');
     showMessage(`${resultText} | Net: ${netWin}`, messageClass);
 
@@ -534,6 +578,7 @@ function resolveHands() {
 
 function showMessage(text, type = '') {
     const messageEl = document.getElementById('message');
+    if (!messageEl) return;
     messageEl.textContent = text;
     messageEl.className = `message ${type}`;
 }
@@ -548,20 +593,25 @@ function resetGame() {
         gamePhase: 'betting',
         gamesPlayed: 0,
         gamesWon: 0,
-        totalBet: 0,
         currentBet: 5,
-        numHands: 1
+        numHands: 1,
+
+        totalHandsPlayed: 0,
+        totalMoneyBet: 0,
+        currentRoundBet: 0
     };
-    document.getElementById('message').textContent = '';
-    document.getElementById('message').className = 'message';
+    const msg = document.getElementById('message');
+    if (msg) { msg.textContent = ''; msg.className = 'message'; }
 
     // Reset bet button states
     document.querySelectorAll('.quick-bet-btn').forEach(btn => btn.classList.remove('active'));
-    document.querySelector('.quick-bet-btn').classList.add('active'); // Default to $5
+    const firstBetBtn = document.querySelector('.quick-bet-btn');
+    if (firstBetBtn) firstBetBtn.classList.add('active'); // Default to $5
 
     // Reset hands button states
     document.querySelectorAll('.hands-btn').forEach(btn => btn.classList.remove('active'));
-    document.querySelector('.hands-btn').classList.add('active'); // Default to 1 hand
+    const firstHandsBtn = document.querySelector('.hands-btn');
+    if (firstHandsBtn) firstHandsBtn.classList.add('active'); // Default to 1 hand
 
     updateDisplay();
 }
