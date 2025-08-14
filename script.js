@@ -121,11 +121,13 @@ function updateDisplay() {
         Math.round((gameState.gamesWon / gameState.gamesPlayed) * 100) : 0;
     setTextIfExists('winRate', `${winRate}%`);
 
-    // Update dealer
+    // Update dealer - FIXED: Only show hidden card during betting and playing phases
     const dealerValue = calculateHandValue(gameState.dealerHand);
+    const shouldHideHoleCard = gameState.gamePhase === 'betting' || gameState.gamePhase === 'playing';
+    
     setTextIfExists(
         'dealerValue',
-        (gameState.gamePhase === 'betting' || gameState.gamePhase === 'playing') ?
+        shouldHideHoleCard ? 
             (gameState.dealerHand.length > 0 ? '?' : '0') : dealerValue
     );
 
@@ -133,10 +135,9 @@ function updateDisplay() {
     if (dealerCardsEl) {
         dealerCardsEl.innerHTML = '';
         gameState.dealerHand.forEach((card, index) => {
-            const cardEl = createCardElement(
-                card,
-                index === 1 && (gameState.gamePhase === 'betting' || gameState.gamePhase === 'playing')
-            );
+            // FIXED: Hide the hole card (second card, index 1) only during betting/playing phases
+            const shouldHideThisCard = index === 1 && shouldHideHoleCard;
+            const cardEl = createCardElement(card, shouldHideThisCard);
             dealerCardsEl.appendChild(cardEl);
         });
     }
@@ -380,8 +381,12 @@ function checkForBlackjacks() {
     const dealerBlackjack = calculateHandValue(gameState.dealerHand) === 21;
 
     for (let hand of gameState.hands) {
-        const handValue = calculateHandValue(hand.cards);
-        if (handValue === 21) {
+        const value = calculateHandValue(hand.cards);
+        
+        if (hand.isSplitAce) {
+            // Split ace gets only one card, 21 is just "stood"
+            hand.status = 'stood';
+        } else if (value === 21 && hand.cards.length === 2) {
             hand.status = 'blackjack';
         }
     }
@@ -389,23 +394,26 @@ function checkForBlackjacks() {
     if (dealerBlackjack) {
         gameState.gamePhase = 'finished';
         resolveHands();
+        return;
     }
 }
 
 function findNextHand() {
-    while (gameState.currentHandIndex < gameState.hands.length) {
-        const hand = gameState.hands[gameState.currentHandIndex];
-        const handValue = calculateHandValue(hand.cards);
-
-        if ((hand.status === 'playing' || hand.status === 'split') && handValue < 21) {
-            updateDisplay();
-            return;
-        }
+    while (gameState.currentHandIndex < gameState.hands.length &&
+           (gameState.hands[gameState.currentHandIndex].status !== 'playing')) {
         gameState.currentHandIndex++;
     }
 
-    gameState.gamePhase = 'dealer';
-    setTimeout(() => dealerPlay(), 500);
+    if (gameState.currentHandIndex >= gameState.hands.length) {
+        dealerPlay();
+    } else {
+        if (gameState.hands[gameState.currentHandIndex].isSplitAce) {
+            gameState.hands[gameState.currentHandIndex].status = 'stood';
+            gameState.currentHandIndex++;
+            findNextHand();
+        }
+        updateDisplay();
+    }
 }
 
 function hit() {
@@ -462,39 +470,42 @@ function surrender() {
 
 function split() {
     const hand = gameState.hands[gameState.currentHandIndex];
-    const splitCheck = canSplitHand(hand);
-    if (!splitCheck.ok) return;
+    if (hand.cards.length === 2 &&
+        hand.cards[0].rank === hand.cards[1].rank &&
+        gameState.money >= hand.bet &&
+        gameState.hands.length < 4) {
 
-    // Deduct extra bet and update trackers
-    gameState.money -= hand.bet;
-    gameState.currentRoundBet += hand.bet; // this round's stake increases
-    gameState.totalMoneyBet += hand.bet;   // cumulative stake increases
+        const newHand = {
+            cards: [hand.cards.pop()],
+            bet: hand.bet,
+            status: 'playing',
+            isSplitAce: false
+        };
 
-    // Split the pair
-    const movedCard = hand.cards.pop();
-    const newHand = {
-        cards: [movedCard],
-        bet: hand.bet,
-        status: 'split'
-    };
+        if (hand.cards[0].rank === 'A') {
+            hand.isSplitAce = true;
+            newHand.isSplitAce = true;
+        }
 
-    // Deal one to each
-    hand.cards.push(gameState.deck.pop());
-    newHand.cards.push(gameState.deck.pop());
+        hand.cards.push(gameState.deck.pop());
+        newHand.cards.push(gameState.deck.pop());
 
-    // Label original as split for UI
-    if (hand.status === 'playing') hand.status = 'split';
+        gameState.money -= hand.bet;
+        gameState.hands.splice(gameState.currentHandIndex + 1, 0, newHand);
 
-    // Insert right after current
-    gameState.hands.splice(gameState.currentHandIndex + 1, 0, newHand);
+        updateDisplay();
 
-    // NEW: count the extra hand created by the split
-    gameState.totalHandsPlayed += 1;
-
-    updateDisplay();
+        // Auto-advance if split aces
+        if (hand.isSplitAce) {
+            hand.status = 'stood';
+            findNextHand();
+        }
+    }
 }
 
 function dealerPlay() {
+    // FIXED: Add explicit 'dealer' phase to ensure hole card is revealed
+    gameState.gamePhase = 'dealer';
     updateDisplay();
 
     const dealCards = () => {
