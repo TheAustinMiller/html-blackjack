@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pixel Blackjack</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="game-container">
+        <div class="header">
+            <h1 class="title">PIXEL BLACKJACK</h1>
+            <div class="game-stats">
+                <div class="stat">
+                    <div class="stat-label">MONEY</div>
+                    <div class="stat-value" id="money">$1000</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">TOTAL BET</div>
+                    <div class="stat-value" id="totalBet">$0</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">HANDS</div>
+                    <div class="stat-value" id="handCount">1</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-label">WIN RATE</div>
+                    <div class="stat-value" id="winRate">0%</div>
+                </div>
+            </div>
+            
+            <div class="bet-controls">
+                <div class="bet-section">
+                    <button class="quick-bet-btn active" onclick="setBet(5)">$5</button>
+                    <button class="quick-bet-btn" onclick="setBet(10)">$10</button>
+                    <button class="quick-bet-btn" onclick="setBet(25)">$25</button>
+                    <button class="quick-bet-btn" onclick="setBet(50)">$50</button>
+                    <button class="quick-bet-btn" onclick="setBet(100)">$100</button>
+                </div>
+                <div class="bet-section">
+                    <button class="hands-btn active" onclick="setHands(1)">1 HAND</button>
+                    <button class="hands-btn" onclick="setHands(2)">2 HANDS</button>
+                    <button class="hands-btn" onclick="setHands(3)">3 HANDS</button>
+                    <button class="hands-btn" onclick="setHands(4)">4 HANDS</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="dealer-section">
+            <div class="hand-header">
+                <div class="hand-title">DEALER</div>
+                <div class="hand-value" id="dealerValue">0</div>
+            </div>
+            <div class="cards" id="dealerCards"></div>
+        </div>
+
+        <div class="hands-container" id="handsContainer"></div>
+
+        <div class="message" id="message"></div>
+
+        <div class="new-game-section">
+            <button class="btn btn-primary" id="dealBtn" onclick="startNewHand()">DEAL CARDS</button>
+            <button class="btn btn-success" id="newGameBtn" onclick="resetGame()" style="display: none;">NEW GAME</button>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
