@@ -25,5 +25,5 @@
 
 Inspired by *Balatro’s pixel style* and classic casino gameplay, **PIXEL BLACKJACK** is built for **fun, strategy, and endless replayability**. 
 
-Screenshot:
+## 📷 Screenshot:
 <img width="2032" height="1221" alt="image" src="https://github.com/user-attachments/assets/9dc93e37-e697-43f1-a72c-13af24940240" />
